@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# 虚拟环境
+venv/
+*.venv/
+env/
+
+# 操作系统
+.DS_Store
+
+# 日志
+*.log
+
+# 临时文件
+temp_*
