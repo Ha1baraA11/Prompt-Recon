@@ -68,3 +68,5 @@ promptrecon -u [https://github.com/openai/gpt-3](https://github.com/openai/gpt-3
 # Use in CI/CD (will exit with code 3 if critical risk found)
 promptrecon -d .
 ```
+## Stargazers over time
+[![Stargazers over time](https://starchart.cc/Ha1baraA11/Prompt-Recon.svg?variant=dark)](https://starchart.cc/Ha1baraA11/Prompt-Recon)
