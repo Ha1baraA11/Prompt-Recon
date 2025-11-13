@@ -68,3 +68,5 @@ promptrecon -u [https://github.com/openai/gpt-3](https://github.com/openai/gpt-3
 # 在 CI/CD 中使用 (如发现严重风险，将以退出码 3 失败)
 promptrecon -d .
 ```
+## Stargazers over time
+[![Stargazers over time](https://starchart.cc/Ha1baraA11/Prompt-Recon.svg?variant=dark)](https://starchart.cc/Ha1baraA11/Prompt-Recon)
