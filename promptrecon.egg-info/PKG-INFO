@@ -1,0 +1,25 @@
+Metadata-Version: 2.4
+Name: promptrecon
+Version: 0.3.0
+Summary: A multithreaded scanner for hardcoded AI System Prompts.
+Author: [Your Name/Handle Here]
+Classifier: Programming Language :: Python :: 3
+Classifier: Operating System :: OS Independent
+Classifier: Environment :: Console
+Classifier: Topic :: Security
+Classifier: Topic :: Utilities
+Requires-Dist: rich
+Requires-Dist: gitpython
+Requires-Dist: fastapi[all]
+Requires-Dist: langchain
+Requires-Dist: langchain_openai
+Requires-Dist: sentence-transformers
+Requires-Dist: uvicorn
+Requires-Dist: pydantic
+Requires-Dist: scikit-learn
+Requires-Dist: networkx
+Requires-Dist: matplotlib
+Dynamic: author
+Dynamic: classifier
+Dynamic: requires-dist
+Dynamic: summary

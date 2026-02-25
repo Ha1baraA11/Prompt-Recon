@@ -1,0 +1,11 @@
+rich
+gitpython
+fastapi[all]
+langchain
+langchain_openai
+sentence-transformers
+uvicorn
+pydantic
+scikit-learn
+networkx
+matplotlib
