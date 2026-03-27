@@ -174,3 +174,28 @@ def scan_file(filepath, rules):
     except Exception:
         pass
     return local_findings
+
+# --- v2.0: Rich Table Output ---
+def output_rich_table(findings, console=None):
+    """Output findings as a rich table to console."""
+    from rich.console import Console
+    from rich.table import Table
+    if console is None:
+        console = Console()
+
+    table = Table(title="Prompt Leak Scan Results", show_lines=True)
+    table.add_column("Risk", justify="right", style="bold red")
+    table.add_column("Rule", style="cyan")
+    table.add_column("File", style="blue")
+    table.add_column("Snippet", style="white")
+
+    for f in findings:
+        snippet = f.get("snippet", "")[:60].replace('\n', ' ')
+        table.add_row(
+            f"{f.get('risk_score', 0):.1f}",
+            f.get("rule_name", "unknown"),
+            f.get("file", "unknown"),
+            snippet
+        )
+
+    console.print(table)

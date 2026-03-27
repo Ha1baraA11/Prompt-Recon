@@ -80,7 +80,30 @@ def save_jsonl_report(findings_list, filename):
 # v2.0: Orchestrator 降维打击架构
 # ----------------------------------------------------------------------
 
-from .ml.vector_analyzer import VectorAnomalyDetector
+# Lazy imports - some modules require extra dependencies
+_vector_analyzer = None
+_red_teaming = None
+
+def _get_vector_analyzer():
+    global _vector_analyzer
+    if _vector_analyzer is None:
+        try:
+            from .ml.vector_analyzer import VectorAnomalyDetector
+            _vector_analyzer = VectorAnomalyDetector
+        except ImportError:
+            _vector_analyzer = False
+    return _vector_analyzer if _vector_analyzer else None
+
+def _get_red_teaming():
+    global _red_teaming
+    if _red_teaming is None:
+        try:
+            from .ml.red_teaming import RedTeamValidator
+            _red_teaming = RedTeamValidator
+        except ImportError:
+            _red_teaming = False
+    return _red_teaming if _red_teaming else None
+
 from .dynamic.sentinel_proxy import run_sentinel
 from .auto_remediate.patcher import auto_patch_file
 from .cpg.ast_tracker import build_project_cpg
@@ -150,10 +173,45 @@ def cmd_deep_scan(args):
             console.print("[+] No files to scan.", style="green")
             sys.exit(0)
             
-        # 2. Vector Anomaly Analysis & Legacy Core Scan
+        # 2. Initialize Vector Anomaly Detector
         console.print(f"[*] Initializing Vector Anomaly Detector (bge-small-zh)...")
-        # In a real heavy implementation, we'd pass this to threads
-        # vector_detector = VectorAnomalyDetector()
+        VectorAnomalyDetector = _get_vector_analyzer()
+        vector_detector = None
+        if VectorAnomalyDetector:
+            try:
+                vector_detector = VectorAnomalyDetector()
+                console.print(f"[+] Vector Anomaly Detector loaded successfully")
+            except Exception as e:
+                console.print(f"[WARNING] Vector Anomaly Detector unavailable: {e}")
+        else:
+            console.print(f"[*] Vector Anomaly Detector: sentence-transformers not installed")
+
+        # 2b. Initialize LLM Validator (optional, requires OPENAI_API_KEY)
+        RedTeamValidator = _get_red_teaming()
+        llm_validator = None
+        if RedTeamValidator:
+            try:
+                llm_validator = RedTeamValidator()
+                if llm_validator.llm:
+                    console.print(f"[+] LLM Validator initialized (gpt-4o-mini)")
+                else:
+                    console.print(f"[*] LLM Validator: No API key (OPENAI_API_KEY not set), skipping")
+                    llm_validator = None
+            except Exception as e:
+                console.print(f"[WARNING] LLM Validator unavailable: {e}")
+                llm_validator = None
+        else:
+            console.print(f"[*] LLM Validator: langchain not installed")
+
+        # 2c. Build CPG for data flow tracking
+        cpg_results = {}
+        if not args.url:
+            console.print(f"[*] Building project CPG (AST tracking)...")
+            try:
+                cpg_results = build_project_cpg(target_dir)
+                console.print(f"[+] CPG built: {len(cpg_results)} files with tracked variables")
+            except Exception as e:
+                console.print(f"[WARNING] CPG build failed: {e}")
         
         # 3. Sociotech Analysis setup
         repo_path = target_dir if is_temp_dir else os.getcwd()
@@ -172,12 +230,22 @@ def cmd_deep_scan(args):
                     try:
                         result = future.result()
                         if result:
-                            # Enhance with Sociotech
+                            # Enhance with Sociotech and Vector Analysis
                             for finding in result:
                                 abs_path = os.path.join(target_dir, finding["file"])
                                 socio = analyze_author_risk(repo_path, abs_path)
                                 finding["sociotech"] = socio
                                 finding["risk_score"] += socio.get("sociotech_risk_modifier", 0)
+
+                                # Vector Anomaly Detection
+                                if vector_detector and finding.get("snippet"):
+                                    try:
+                                        snippet_for_vec = finding["snippet"].replace("Decoded: ", "").replace("...", "")
+                                        if vector_detector.is_anomalous_prompt(snippet_for_vec):
+                                            finding["vector_anomaly"] = True
+                                            finding["risk_score"] = min(finding["risk_score"] + 2.0, 10.0)
+                                    except Exception:
+                                        pass
                                 
                             with findings_lock:
                                 findings.extend(result)
@@ -190,17 +258,42 @@ def cmd_deep_scan(args):
             console.print("\n[+] Scan complete. Matrix is clean.", style="green")
             sys.exit(0)
 
+        # LLM Validation Post-Filter
+        if llm_validator and findings:
+            console.print(f"[*] Running LLM validation on {len(findings)} findings...")
+            validated_findings = []
+            for f in findings:
+                try:
+                    result = llm_validator.validate_snippet(f["file"], f.get("snippet", ""))
+                    f["llm_validated"] = result.get("is_leak", False)
+                    f["llm_confidence"] = result.get("confidence", 0)
+                    f["llm_reason"] = result.get("reason", "")
+                    # Keep if LLM says it's a leak OR if confidence is high enough
+                    if result.get("is_leak", False) or result.get("confidence", 0) >= 50:
+                        validated_findings.append(f)
+                except Exception as e:
+                    # On error, keep the finding
+                    validated_findings.append(f)
+            findings = validated_findings
+            console.print(f"[+] After LLM validation: {len(findings)} findings remain")
+
         console.print(f"\n[!] Deep Scan Complete. Found [bold red]{len(findings)}[/bold red] anomalies!")
         findings.sort(key=lambda x: x['risk_score'], reverse=True)
-        
-        # We assume output_rich_table exists in legacy core or is defined
-        from .core import output_rich_table # Ensure it's imported if needed
+
+        # Output rich table
+        from .core import output_rich_table
         try:
-            output_rich_table(findings)
+            output_rich_table(findings, console)
         except Exception:
             console.print(findings)
-            
-        if args.jsonl: save_jsonl_report(findings, args.jsonl)
+
+        # Save reports
+        if args.jsonl:
+            save_jsonl_report(findings, args.jsonl)
+        if args.csv:
+            save_csv_report(findings, args.csv)
+        if args.md:
+            save_md_report(findings, args.md)
 
     finally:
         if is_temp_dir and os.path.exists(target_dir):
@@ -234,6 +327,8 @@ def main():
     group.add_argument('-u', '--url', help="GitHub repo URL.")
     group.add_argument('-d', '--directory', help="Local directory.")
     scan_parser.add_argument('--jsonl', help="JSONL output")
+    scan_parser.add_argument('--csv', help="CSV output file")
+    scan_parser.add_argument('--md', help="Markdown output file")
     scan_parser.add_argument('-r', '--rules-dir', default="promptrecon/rules")
     scan_parser.add_argument('-i', '--ignorefile', default=".promptignore")
     scan_parser.add_argument('--safe', action='store_true')
