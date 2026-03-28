@@ -172,17 +172,29 @@ class TestPreCommitHook(unittest.TestCase):
         finally:
             shutil.rmtree(test_dir)
 
+    def test_trailing_slash_directory_alias(self):
+        """
+        验证 should_ignore() 对末尾斜杠目录规则的归一化：
+        "ignored_dir/" 和 "ignored_dir" 应等价匹配。
+        """
+        # 裸目录项
+        self.assertTrue(should_ignore('/tmp/x/ignored_dir', ['ignored_dir']))
+        # 末尾斜杠别名
+        self.assertTrue(should_ignore('/tmp/x/ignored_dir', ['ignored_dir/']))
+        # 两者等价
+        self.assertTrue(should_ignore('/tmp/x/ignored_dir', ['ignored_dir/']))
+        self.assertTrue(should_ignore('/tmp/x/ignored_dir', ['ignored_dir']))
+
     def test_directory_prune_by_bare_name(self):
         """
-        裸目录项（如 ignored_dir）应剪枝整棵子树，不只是忽略当前目录本身。
-        创建 ignored_dir/nested/secret.py 和 main.py，
-        断言只有 main.py 被报出，ignored_dir 和 secret.py 都不出现。
+        裸目录项（如 ignored_dir）应剪枝整棵子树。
+        .promptignore 使用末尾斜杠格式 ignored_dir/。
         """
         external_dir = tempfile.mkdtemp(prefix='pr_prune_')
         try:
-            # 外部目录有自己的 .promptignore
+            # .promptignore 末尾带斜杠
             with open(os.path.join(external_dir, '.promptignore'), 'w') as f:
-                f.write('ignored_dir\n')
+                f.write('ignored_dir/\n')
 
             # 放一个会被忽略的子目录，里面有深层文件
             nested_dir = os.path.join(external_dir, 'ignored_dir', 'nested')

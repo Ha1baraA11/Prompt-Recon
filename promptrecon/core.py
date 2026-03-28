@@ -22,9 +22,15 @@ def load_ignore_patterns(ignorefile=".promptignore"):
 
 def should_ignore(filepath, patterns):
     path_str = str(filepath)
+    basename = os.path.basename(path_str)
     for pattern in patterns:
-        if fnmatch.fnmatch(path_str, pattern) or fnmatch.fnmatch(os.path.basename(path_str), pattern):
+        if fnmatch.fnmatch(path_str, pattern) or fnmatch.fnmatch(basename, pattern):
             return True
+        # 末尾 / 的目录名规则，如 "ignored_dir/" 等价于 "ignored_dir"
+        if pattern.endswith('/'):
+            stripped = pattern.rstrip('/')
+            if fnmatch.fnmatch(path_str, stripped) or fnmatch.fnmatch(basename, stripped):
+                return True
     return False
 
 
