@@ -6,6 +6,12 @@
 运行方式: python3 scripts/install_pre_commit_hook.py
 
 幂等：重复执行只覆盖同一份 Hook。
+
+安装契约：
+  1. 先执行 pip install -e . 安装 Prompt-Recon
+  2. 再运行本脚本，将 Hook 安装到目标 Git 仓库
+Hook 依赖 PYTHONPATH 指向 Prompt-Recon 源码根目录，
+由安装脚本写入目标仓库的 .git/hooks/pre-commit 包装脚本。
 """
 
 import os
@@ -15,8 +21,13 @@ import subprocess
 import sys
 
 
-def get_repo_root():
-    # 使用运行时的当前目录（支持从任意仓库目录安装）
+def get_promptrecon_root():
+    """Prompt-Recon 源码根目录（脚本所在项目的根目录）"""
+    return pathlib.Path(__file__).resolve().parent.parent
+
+
+def get_target_repo_root():
+    """目标 Git 仓库根目录（运行 install 的那个仓库）"""
     result = subprocess.run(
         ['git', 'rev-parse', '--show-toplevel'],
         capture_output=True, text=True,
@@ -28,18 +39,19 @@ def get_repo_root():
 
 
 def install():
-    repo_root = get_repo_root()
-    hook_target = repo_root / '.git' / 'hooks' / 'pre-commit'
+    promptrecon_root = str(get_promptrecon_root())
+    target_repo_root = str(get_target_repo_root())
+    python_bin = sys.executable  # 绝对路径
 
-    # 写 wrapper：cd 到仓库根，加入 PYTHONPATH 再用 python3 -m 启动
-    # PYTHONPATH 需要指向 Prompt-Recon 的 parent 目录，让 python 能找到 promptrecon 包
-    promptrecon_root = str(repo_root)
+    hook_target = pathlib.Path(target_repo_root) / '.git' / 'hooks' / 'pre-commit'
+
+    # Wrapper 顺序：shebang → 注释 → PYTHONPATH → cd → exec
     wrapper_lines = [
         '#!/bin/sh',
-        f'# Auto-installed by Prompt-Recon',
+        '# Auto-installed by Prompt-Recon',
         f'export PYTHONPATH="{promptrecon_root}:$PYTHONPATH" && \\',
-        f'cd "{repo_root}" && \\',
-        f'  python3 -m promptrecon.hooks.pre_commit',
+        f'cd "{target_repo_root}" && \\',
+        f'  exec "{python_bin}" -m promptrecon.hooks.pre_commit',
     ]
     wrapper_content = '\n'.join(wrapper_lines) + '\n'
 
@@ -50,8 +62,9 @@ def install():
     hook_target.write_text(wrapper_content)
     hook_target.chmod(hook_target.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
-    print(f"Installed: {hook_target}")
-    print(f"Runner:    {sys.executable} -m promptrecon.hooks.pre_commit")
+    print(f"Installed:  {hook_target}")
+    print(f"PYTHONPATH: {promptrecon_root}")
+    print(f"Runner:     {python_bin} -m promptrecon.hooks.pre_commit")
 
 
 if __name__ == '__main__':

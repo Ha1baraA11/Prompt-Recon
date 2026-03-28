@@ -8,6 +8,10 @@ Prompt-Recon Pre-commit Hook Smoke Test
 2. 暂存泄漏被拦截
 3. 工作区脏但暂存区干净仍通过（staged blob 隔离性）
 4. .env 文件被扫描
+
+回归测试：
+5. 外部目录扫描：仓库外文件能报出 finding，不静默漏报
+6. 默认 ignore：.git/venv/__pycache__ 在无 .promptignore 时不被扫描
 """
 
 import unittest
@@ -20,6 +24,9 @@ import shutil
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO_ROOT)
 
+from promptrecon.core import scan_file, load_ignore_patterns, should_ignore
+from promptrecon.rules.builtin import load_builtin_rules
+
 
 class TestPreCommitHook(unittest.TestCase):
 
@@ -29,7 +36,6 @@ class TestPreCommitHook(unittest.TestCase):
         self.repo_dir = os.path.join(self.temp_dir, 'repo')
         os.makedirs(self.repo_dir)
 
-        # 初始化 Git 仓库
         subprocess.run(['git', 'init'], cwd=self.repo_dir, check=True, capture_output=True)
         subprocess.run(
             ['git', 'config', 'user.email', 'test@test.com'],
@@ -40,7 +46,6 @@ class TestPreCommitHook(unittest.TestCase):
             cwd=self.repo_dir, check=True, capture_output=True
         )
 
-        # 安装 Hook（用生成的 wrapper）
         install_script = os.path.join(REPO_ROOT, 'scripts', 'install_pre_commit_hook.py')
         result = subprocess.run(
             [sys.executable, install_script],
@@ -48,16 +53,17 @@ class TestPreCommitHook(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, f"Hook install failed: {result.stderr}")
 
-        # 读取生成的 hook 脚本，检查是否用了 -m 方式启动
         hook_path = os.path.join(self.repo_dir, '.git', 'hooks', 'pre-commit')
-        hook_content = open(hook_path).read()
+        with open(hook_path) as hf:
+            hook_content = hf.read()
         self.assertIn('-m promptrecon.hooks.pre_commit', hook_content)
+        # 验证绝对路径被写进了 wrapper
+        self.assertIn(sys.executable, hook_content)
 
     def tearDown(self):
         shutil.rmtree(self.temp_dir)
 
     def _git_commit(self, msg='test'):
-        """运行 git commit，返回 subprocess.CompletedProcess"""
         result = subprocess.run(
             ['git', 'commit', '-m', msg],
             cwd=self.repo_dir, capture_output=True, text=True
@@ -82,14 +88,13 @@ class TestPreCommitHook(unittest.TestCase):
         subprocess.run(['git', 'add', 'secret.py'], cwd=self.repo_dir, check=True, capture_output=True)
         result = self._git_commit('add secret')
         self.assertNotEqual(result.returncode, 0,
-                             f"Expected blocked, got: {result.stdout}\n{result.stderr}")
+                            f"Expected blocked, got: {result.stdout}\n{result.stderr}")
         combined = result.stdout + result.stderr
         self.assertIn('BLOCKED', combined)
         self.assertIn('generic_secret', combined)
 
     # ---- 场景3：工作区脏但暂存区干净仍通过 ----
     def test_working_dirty_staged_clean_passes(self):
-        # 先提交一个干净文件（创建历史）
         clean_content = 'x = 1\n'
         with open(os.path.join(self.repo_dir, 'clean.py'), 'w') as f:
             f.write(clean_content)
@@ -97,11 +102,9 @@ class TestPreCommitHook(unittest.TestCase):
         result1 = self._git_commit('clean commit')
         self.assertEqual(result1.returncode, 0)
 
-        # 工作区加入 dirty.py（含 secret，未 staged）
         dirty_content = 'api_key = "sk-pretend-not-staged"\n'
         with open(os.path.join(self.repo_dir, 'dirty.py'), 'w') as f:
             f.write(dirty_content)
-        # --allow-empty 强制提交（无新 staged 内容），验证 hook 不扫 untracked 文件
         result2 = subprocess.run(
             ['git', 'commit', '-m', 'verify hook', '--allow-empty'],
             cwd=self.repo_dir, capture_output=True, text=True
@@ -110,19 +113,70 @@ class TestPreCommitHook(unittest.TestCase):
                          f"dirty.py is untracked; hook should only scan staged blob. "
                          f"Got: {result2.stdout}\n{result2.stderr}")
 
-    # ---- 场景4：.env 文件被扫描（用引号值触发 generic_secret） ----
+    # ---- 场景4：.env 文件被扫描 ----
     def test_env_file_scanned(self):
-        # generic_secret 要求引号，OPENAI_API_KEY=sk-... 不带引号 → 不匹配
-        # 用带引号的格式来测试 .env 能否被扫描
         env_content = 'api_key = "sk-mock-1234567890abcdefghijklmnop"\n'
         with open(os.path.join(self.repo_dir, '.env'), 'w') as f:
             f.write(env_content)
         subprocess.run(['git', 'add', '.env'], cwd=self.repo_dir, check=True, capture_output=True)
         result = self._git_commit('add env')
         self.assertNotEqual(result.returncode, 0,
-                             f"Expected blocked, got: {result.stdout}\n{result.stderr}")
+                            f"Expected blocked, got: {result.stdout}\n{result.stderr}")
         combined = result.stdout + result.stderr
         self.assertIn('BLOCKED', combined)
+
+    # ---- 回归5：外部目录扫描不漏报 ----
+    def test_external_path_scan_finds_secret(self):
+        """对仓库外临时文件调用 scan_file(...display_root=...)，必须返回 finding"""
+        rules = load_builtin_rules()
+        external_dir = tempfile.mkdtemp(prefix='pr_external_')
+        try:
+            secret_file = os.path.join(external_dir, 'api.py')
+            with open(secret_file, 'w') as f:
+                f.write('api_key = "sk-mock-1234567890abcdefghijklmnop"\n')
+            findings = scan_file(secret_file, rules, display_root=external_dir)
+            self.assertGreater(len(findings), 0,
+                              f"scan_file on external file should find secret, got: {findings}")
+            self.assertEqual(findings[0]['file'], 'api.py')
+        finally:
+            shutil.rmtree(external_dir)
+
+    # ---- 回归6：默认 ignore 不扫 .git/venv/__pycache__ ----
+    def test_default_ignore_excludes_git_and_venv(self):
+        """无 .promptignore 时，.git/venv/__pycache__ 不会被扫描"""
+        rules = load_builtin_rules()
+        test_dir = tempfile.mkdtemp(prefix='pr_ignore_')
+        try:
+            # 在 .git/ 内放 secret
+            git_dir = os.path.join(test_dir, '.git')
+            os.makedirs(git_dir)
+            secret_in_git = os.path.join(git_dir, 'config.py')
+            with open(secret_in_git, 'w') as f:
+                f.write('api_key = "sk-pretend-git-secret"\n')
+
+            # 在 venv/ 内放 secret
+            venv_dir = os.path.join(test_dir, 'venv')
+            os.makedirs(venv_dir)
+            secret_in_venv = os.path.join(venv_dir, 'activate.py')
+            with open(secret_in_venv, 'w') as f:
+                f.write('api_key = "sk-pretend-venv-secret"\n')
+
+            # 放一个正常文件
+            normal_file = os.path.join(test_dir, 'main.py')
+            with open(normal_file, 'w') as f:
+                f.write('print("hello")\n')
+
+            ignore_patterns = load_ignore_patterns('.promptignore')  # 文件不存在
+            self.assertTrue(len(ignore_patterns) > 0, "Default ignore patterns should not be empty")
+
+            # .git 路径应该被忽略
+            self.assertTrue(should_ignore(secret_in_git, ignore_patterns))
+            # venv 路径应该被忽略
+            self.assertTrue(should_ignore(secret_in_venv, ignore_patterns))
+            # 正常文件不应该被忽略
+            self.assertFalse(should_ignore(normal_file, ignore_patterns))
+        finally:
+            shutil.rmtree(test_dir)
 
 
 if __name__ == '__main__':

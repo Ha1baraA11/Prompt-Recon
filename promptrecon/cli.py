@@ -10,7 +10,7 @@ import os
 import sys
 import argparse
 
-from .core import scan_file, load_rules_from_dir
+from .core import scan_file, load_rules_from_dir, load_ignore_patterns, should_ignore
 
 
 # --- patch 命令（轻量，直接调 patcher） ---
@@ -48,21 +48,15 @@ def cmd_scan(args):
 
     console.print(f"[+] Loaded {len(rules)} rule(s). Scanning...")
 
-    # 遍历目录
-    ignore_patterns = []
-    ignorefile = getattr(args, 'ignorefile', None)
-    if ignorefile and os.path.exists(ignorefile):
-        from .core import load_ignore_patterns
-        ignore_patterns = load_ignore_patterns(ignorefile)
+    # 无条件加载 ignore patterns（包括内置默认规则，文件不存在也能拿到默认值）
+    ignore_patterns = load_ignore_patterns(args.ignorefile)
 
     files_to_scan = []
     for root, _, files in os.walk(args.directory):
         for fname in files:
             fpath = os.path.join(root, fname)
-            if ignore_patterns:
-                from .core import should_ignore
-                if should_ignore(fpath, ignore_patterns):
-                    continue
+            if should_ignore(fpath, ignore_patterns):
+                continue
             files_to_scan.append(fpath)
 
     if not files_to_scan:
@@ -71,7 +65,7 @@ def cmd_scan(args):
 
     all_findings = []
     for fpath in files_to_scan:
-        findings = scan_file(fpath, rules)
+        findings = scan_file(fpath, rules, display_root=args.directory)
         all_findings.extend(findings)
 
     if not all_findings:

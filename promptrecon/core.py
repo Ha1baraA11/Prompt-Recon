@@ -148,10 +148,16 @@ def scan_content(content, rules):
 
 
 # --- v0.3 核心扫描函数（委托给 scan_content） ---
-def scan_file(filepath, rules):
+def scan_file(filepath, rules, display_root=None):
     """
     扫描单个文件，返回 findings 列表（含 risk_score）。
     委托给 scan_content() 做实际匹配。
+
+    display_root: 可选，优先作为相对路径的根。
+                  三级路径计算：
+                    1. relative_to(display_root)
+                    2. relative_to(cwd)
+                    3. 绝对路径（fallback）
     """
     local_findings = []
     if not is_file_scannable(filepath):
@@ -160,18 +166,31 @@ def scan_file(filepath, rules):
     try:
         with open(filepath, 'rb') as f:
             raw = f.read()
-        # 先尝试 utf-8，失败则走 binary scan（is_file_scannable 已保证不是纯二进制）
         try:
             content = raw.decode('utf-8', errors='replace')
         except Exception:
             return []
+
+        # ---- 路径归一化：三级降级 ----
+        abs_path = Path(filepath).resolve()
+        display_path = None
+        if display_root is not None:
+            try:
+                display_path = str(abs_path.relative_to(Path(display_root).resolve()))
+            except ValueError:
+                pass
+        if display_path is None:
+            try:
+                display_path = str(abs_path.relative_to(Path.cwd().resolve()))
+            except ValueError:
+                display_path = str(abs_path)
 
         basic_hits = scan_content(content, rules)
         for hit in basic_hits:
             rule_name = hit['rule_name']
             rule_data = rules.get(rule_name, {})
             finding = {
-                "file": str(Path(filepath).relative_to(Path.cwd())),
+                "file": display_path,
                 "rule_name": rule_name,
                 "snippet": hit['snippet'].strip(),
                 "line": hit.get('line', 0),
