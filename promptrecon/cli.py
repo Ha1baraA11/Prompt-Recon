@@ -54,7 +54,10 @@ def cmd_scan(args):
     ignore_patterns = load_ignore_patterns(ignorefile_path)
 
     files_to_scan = []
-    for root, _, files in os.walk(args.directory):
+    for root, dirs, files in os.walk(args.directory, topdown=True):
+        # 目录级忽略：把匹配的子目录从遍历队列中移除（递归剪枝）
+        dirs[:] = [d for d in dirs
+                    if not should_ignore(os.path.join(root, d), ignore_patterns)]
         for fname in files:
             fpath = os.path.join(root, fname)
             if should_ignore(fpath, ignore_patterns):

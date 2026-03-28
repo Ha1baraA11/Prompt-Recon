@@ -143,40 +143,73 @@ class TestPreCommitHook(unittest.TestCase):
 
     # ---- 回归6：默认 ignore 不扫 .git/venv/__pycache__ ----
     def test_default_ignore_excludes_git_and_venv(self):
-        """无 .promptignore 时，.git/venv/__pycache__ 不会被扫描"""
-        rules = load_builtin_rules()
+        """无 .promptignore 时，.git/venv/__pycache__ 不会被扫描（只测内置默认规则）"""
         test_dir = tempfile.mkdtemp(prefix='pr_ignore_')
         try:
-            # 在 .git/ 内放 secret
             git_dir = os.path.join(test_dir, '.git')
             os.makedirs(git_dir)
             secret_in_git = os.path.join(git_dir, 'config.py')
             with open(secret_in_git, 'w') as f:
-                f.write('api_key = "sk-pretend-git-secret"\n')
+                f.write('api_key = "sk-git-secret"\n')
 
-            # 在 venv/ 内放 secret
             venv_dir = os.path.join(test_dir, 'venv')
             os.makedirs(venv_dir)
             secret_in_venv = os.path.join(venv_dir, 'activate.py')
             with open(secret_in_venv, 'w') as f:
-                f.write('api_key = "sk-pretend-venv-secret"\n')
+                f.write('api_key = "sk-venv-secret"\n')
 
-            # 放一个正常文件
             normal_file = os.path.join(test_dir, 'main.py')
             with open(normal_file, 'w') as f:
                 f.write('print("hello")\n')
 
-            ignore_patterns = load_ignore_patterns('.promptignore')  # 文件不存在
-            self.assertTrue(len(ignore_patterns) > 0, "Default ignore patterns should not be empty")
+            # 文件不存在，测默认规则
+            ignore_patterns = load_ignore_patterns('.promptignore')
+            self.assertTrue(len(ignore_patterns) > 0)
 
-            # .git 路径应该被忽略
             self.assertTrue(should_ignore(secret_in_git, ignore_patterns))
-            # venv 路径应该被忽略
             self.assertTrue(should_ignore(secret_in_venv, ignore_patterns))
-            # 正常文件不应该被忽略
             self.assertFalse(should_ignore(normal_file, ignore_patterns))
         finally:
             shutil.rmtree(test_dir)
+
+    def test_directory_prune_by_bare_name(self):
+        """
+        裸目录项（如 ignored_dir）应剪枝整棵子树，不只是忽略当前目录本身。
+        创建 ignored_dir/nested/secret.py 和 main.py，
+        断言只有 main.py 被报出，ignored_dir 和 secret.py 都不出现。
+        """
+        external_dir = tempfile.mkdtemp(prefix='pr_prune_')
+        try:
+            # 外部目录有自己的 .promptignore
+            with open(os.path.join(external_dir, '.promptignore'), 'w') as f:
+                f.write('ignored_dir\n')
+
+            # 放一个会被忽略的子目录，里面有深层文件
+            nested_dir = os.path.join(external_dir, 'ignored_dir', 'nested')
+            os.makedirs(nested_dir)
+            with open(os.path.join(nested_dir, 'secret.py'), 'w') as f:
+                f.write('api_key = "sk-deep-secret"\n')
+
+            # 放一个正常文件
+            with open(os.path.join(external_dir, 'main.py'), 'w') as f:
+                f.write('api_key = "sk-visible"\n')
+
+            result = subprocess.run(
+                [sys.executable, '-m', 'promptrecon', 'scan', '-d', external_dir],
+                cwd=REPO_ROOT, capture_output=True, text=True
+            )
+            combined = result.stdout + result.stderr
+
+            # main.py 应该被报出
+            self.assertIn('main.py', combined,
+                         f"main.py should be reported: {combined}")
+            # ignored_dir 和 nested/secret.py 都不应该出现
+            self.assertNotIn('ignored_dir', combined,
+                            f"ignored_dir should NOT be in output: {combined}")
+            self.assertNotIn('secret.py', combined,
+                            f"nested secret.py should NOT be in output: {combined}")
+        finally:
+            shutil.rmtree(external_dir)
 
 
 if __name__ == '__main__':
