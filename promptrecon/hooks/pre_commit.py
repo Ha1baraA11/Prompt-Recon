@@ -13,58 +13,37 @@ exit 2  — Hook 自身异常
 import subprocess
 import sys
 import os
-import re
 
-# 使用内置规则（零外部依赖）
+# 复用 core.py 的统一扫描函数
+from promptrecon.core import scan_content
 from promptrecon.rules.builtin import load_builtin_rules
 
-
-def get_staged_content(filepath):
-    """
-    用 git show :filepath 读取 staged blob 内容。
-    filepath: 工作区相对路径，如 "src/main.py"
-    返回: bytes 或 None（文件不存在于 staged）
-    """
-    # :filepath 格式直接从 staged blob 读取
-    result = subprocess.run(
-        ['git', 'show', f':{filepath}'],
-        capture_output=True,
-        cwd=get_repo_root()
-    )
-    if result.returncode != 0:
-        return None
-    return result.stdout
+# 模块加载时缓存一次 repo root，避免每个文件都起 git rev-parse
+_REPO_ROOT = None
 
 
-def get_repo_root():
-    """获取 git 仓库根目录"""
-    result = subprocess.run(
-        ['git', 'rev-parse', '--show-toplevel'],
-        capture_output=True, text=True
-    )
-    if result.returncode != 0:
-        return os.getcwd()
-    return result.stdout.strip()
+def _get_repo_root():
+    global _REPO_ROOT
+    if _REPO_ROOT is None:
+        result = subprocess.run(
+            ['git', 'rev-parse', '--show-toplevel'],
+            capture_output=True, text=True
+        )
+        _REPO_ROOT = result.stdout.strip() if result.returncode == 0 else os.getcwd()
+    return _REPO_ROOT
 
 
-def is_binary(content):
-    """检查是否二进制（含 null byte）"""
-    return b'\x00' in content
-
-
-ALLOWED_EXTENSIONS = {'.py', '.txt', '.json', '.yaml', '.yml', '.env', '.js', '.ts'}
+ALLOWED_EXTENSIONS = {'.py', '.txt', '.json', '.yaml', '.yml', '.js', '.ts'}
+ALLOWED_BASENAMES = {'.env'}
 MAX_FILE_SIZE = 2 * 1024 * 1024  # 2MB
 
 
-def get_staged_files():
-    """
-    用 git diff --cached -z 获取 staged 文件列表。
-    返回: 文件路径列表（字符串）
-    """
+def _get_staged_files():
+    """用 git diff --cached -z 获取 staged 文件列表（bytes 路径）。"""
     result = subprocess.run(
         ['git', 'diff', '--cached', '--name-only', '--diff-filter=ACMR', '-z'],
         capture_output=True,
-        cwd=get_repo_root()
+        cwd=_get_repo_root()
     )
     if result.returncode != 0:
         print("Error: git diff --cached failed", file=sys.stderr)
@@ -73,74 +52,60 @@ def get_staged_files():
     raw = result.stdout
     if not raw:
         return []
-
-    # -z 零字节分隔，最后一个元素是空字节后跟空字符串，过滤掉
-    paths = [p.decode('utf-8', errors='replace') for p in raw.split(b'\x00') if p]
-    return paths
-
-
-def filter_staged_files(paths):
-    """
-    过滤：扩展名白名单 + 文件大小 + 二进制
-    返回: 通过过滤的文件路径列表
-    """
-    filtered = []
-    for path in paths:
-        _, ext = os.path.splitext(path)
-        if ext.lower() not in ALLOWED_EXTENSIONS:
-            continue
-
-        content = get_staged_content(path)
-        if content is None:
-            continue
-        if len(content) > MAX_FILE_SIZE:
-            continue
-        if is_binary(content):
-            continue
-
-        filtered.append(path)
-    return filtered
-
-
-def scan_content(display_path, content, rules):
-    """
-    扫描给定内容，返回命中列表。
-    content: bytes 或 str
-    返回: [{'rule': str, 'snippet': str, 'line': int}, ...]
-    """
-    if isinstance(content, bytes):
-        content = content.decode('utf-8', errors='replace')
-
-    hits = []
-    for name, rule_data in rules.items():
-        regex = rule_data["regex"]
-        for m in regex.finditer(content):
-            line_num = content[:m.start()].count('\n') + 1
-            snippet = m.group(0)[:80]
-            hits.append({'rule': name, 'snippet': snippet, 'line': line_num})
-    return hits
+    return [p for p in raw.split(b'\x00') if p]
 
 
 BLOCKED_FILES = {}
 
 
-def scan_staged(rules):
-    """主扫描流程"""
-    paths = get_staged_files()
-    if not paths:
+def _scan_staged_file(path_bytes, rules):
+    """
+    对单个 staged 文件执行：路径过滤 → 读取 blob → 扫描。
+    每个文件只读一次（合并了过滤 + 扫描）。
+    """
+    # 解码路径
+    path = path_bytes.decode('utf-8', errors='replace')
+    basename = os.path.basename(path)
+    _, ext = os.path.splitext(basename)
+
+    # 扩展名过滤（.env 文件名不走 splitext）
+    is_env_file = basename == '.env'
+    if ext.lower() not in ALLOWED_EXTENSIONS and not is_env_file:
         return
 
-    scannable = filter_staged_files(paths)
+    # 只读一次 staged blob
+    result = subprocess.run(
+        ['git', 'show', f':{path}'],
+        capture_output=True,
+        cwd=_get_repo_root()
+    )
+    if result.returncode != 0:
+        return
+    content_bytes = result.stdout
 
-    for path in scannable:
-        content = get_staged_content(path)
-        if content is None:
-            continue
-        hits = scan_content(path, content, rules)
-        if hits:
-            for hit in hits:
-                print(f"[BLOCKED] {path}: {hit['rule']}: {hit['snippet']}")
-                BLOCKED_FILES[path] = True
+    # 大小过滤
+    if len(content_bytes) > MAX_FILE_SIZE:
+        return
+
+    # 二进制过滤
+    if b'\x00' in content_bytes[:4096]:
+        return
+
+    # 扫描
+    hits = scan_content(content_bytes, rules)
+    if not hits:
+        return
+
+    for hit in hits:
+        print(f"[BLOCKED] {path}: {hit['rule_name']}:{hit['line']} {hit['snippet']}")
+        BLOCKED_FILES[path] = True
+
+
+def scan_staged(rules):
+    """主扫描流程"""
+    staged = _get_staged_files()
+    for path_bytes in staged:
+        _scan_staged_file(path_bytes, rules)
 
     if BLOCKED_FILES:
         print(f"\nBlocked {len(BLOCKED_FILES)} file(s). Use --no-verify to bypass.")

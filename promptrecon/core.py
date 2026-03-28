@@ -126,51 +126,59 @@ def calculate_risk_score(match_data):
         
     return min(base, 10.0)
 
-# --- v0.3 核心扫描函数 ---
+# --- 统一扫描核心：scan_content ---
+def scan_content(content, rules):
+    """
+    扫描给定内容，返回命中列表。
+    content: str 或 bytes（bytes 先 decode）
+    返回: [{'rule_name': str, 'snippet': str, 'line': int}, ...]
+    不包含 risk_score（由调用方自行补充）。
+    """
+    if isinstance(content, bytes):
+        content = content.decode('utf-8', errors='replace')
+
+    hits = []
+    for name, rule_data in rules.items():
+        regex = rule_data["regex"]
+        for m in regex.finditer(content):
+            line_num = content[:m.start()].count('\n') + 1
+            snippet = m.group(0)[:80]
+            hits.append({'rule_name': name, 'snippet': snippet, 'line': line_num})
+    return hits
+
+
+# --- v0.3 核心扫描函数（委托给 scan_content） ---
 def scan_file(filepath, rules):
+    """
+    扫描单个文件，返回 findings 列表（含 risk_score）。
+    委托给 scan_content() 做实际匹配。
+    """
     local_findings = []
     if not is_file_scannable(filepath):
         return local_findings
 
     try:
-        with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
-            content = f.read()
-            
-            for rule_name, rule_data in rules.items():
-                regex = rule_data["regex"]
-                
-                for match in regex.finditer(content):
-                    snippet = ""
-                    risk_adjustment = 0
-                    is_l3_verified = False
-                    
-                    if rule_data.get("needs_decode", False):
-                        decoded_prompt = decode_and_verify(match.group(0))
-                        if not decoded_prompt:
-                            continue
-                        snippet = f"Decoded: {decoded_prompt[:100]}..."
-                        risk_adjustment = 3.0
-                        is_l3_verified = True
-                    else:
-                        try:
-                            snippet = f"{match.group(2)[:100]}..."
-                        except IndexError:
-                            snippet = f"{match.group(1)[:100]}..."
+        with open(filepath, 'rb') as f:
+            raw = f.read()
+        # 先尝试 utf-8，失败则走 binary scan（is_file_scannable 已保证不是纯二进制）
+        try:
+            content = raw.decode('utf-8', errors='replace')
+        except Exception:
+            return []
 
-                    # --- v0.3 Feature #3: L3 验证明文 ---
-                    if not is_l3_verified and looks_like_prompt(snippet):
-                        risk_adjustment += 1.5 # 看起来像 prompt，增加风险
-
-                    finding = {
-                        "file": str(Path(filepath).relative_to(Path.cwd())), # 使用相对路径
-                        "rule_name": rule_name,
-                        "snippet": snippet.strip(),
-                        "rule": rule_data
-                    }
-                    
-                    finding["risk_score"] = calculate_risk_score(finding) + risk_adjustment
-                    local_findings.append(finding)
-                    
+        basic_hits = scan_content(content, rules)
+        for hit in basic_hits:
+            rule_name = hit['rule_name']
+            rule_data = rules.get(rule_name, {})
+            finding = {
+                "file": str(Path(filepath).relative_to(Path.cwd())),
+                "rule_name": rule_name,
+                "snippet": hit['snippet'].strip(),
+                "line": hit.get('line', 0),
+                "rule": rule_data,
+            }
+            finding["risk_score"] = calculate_risk_score(finding)
+            local_findings.append(finding)
     except Exception:
         pass
     return local_findings
