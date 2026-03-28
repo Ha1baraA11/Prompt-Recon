@@ -49,7 +49,9 @@ def cmd_scan(args):
     console.print(f"[+] Loaded {len(rules)} rule(s). Scanning...")
 
     # 无条件加载 ignore patterns（包括内置默认规则，文件不存在也能拿到默认值）
-    ignore_patterns = load_ignore_patterns(args.ignorefile)
+    # .promptignore 路径相对于扫描目标目录（args.directory），不是 cwd
+    ignorefile_path = os.path.join(args.directory, args.ignorefile)
+    ignore_patterns = load_ignore_patterns(ignorefile_path)
 
     files_to_scan = []
     for root, _, files in os.walk(args.directory):
