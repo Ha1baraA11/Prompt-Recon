@@ -1,234 +1,140 @@
-# file: promptrecon/core.py
+"""The offline scanning engine shared by every Prompt-Recon entry point."""
 
-import os
+from __future__ import annotations
+
+import hashlib
+import math
 import re
-import importlib.util
-import base64
-import logging
+from collections.abc import Iterable
 from pathlib import Path
-import fnmatch
 
-def load_ignore_patterns(ignorefile=".promptignore"):
-    patterns = []
-    if os.path.exists(ignorefile):
-        with open(ignorefile, 'r', encoding='utf-8') as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith('#'):
-                    patterns.append(line)
-    # Default ignores
-    patterns.extend(['.git/*', '*/.git/*', 'venv/*', '*/venv/*', '__pycache__/*'])
-    return patterns
+import pathspec
 
-def should_ignore(filepath, patterns):
-    path_str = str(filepath)
-    basename = os.path.basename(path_str)
-    for pattern in patterns:
-        if fnmatch.fnmatch(path_str, pattern) or fnmatch.fnmatch(basename, pattern):
-            return True
-        # 末尾 / 的目录名规则，如 "ignored_dir/" 等价于 "ignored_dir"
-        if pattern.endswith('/'):
-            stripped = pattern.rstrip('/')
-            if fnmatch.fnmatch(path_str, stripped) or fnmatch.fnmatch(basename, stripped):
-                return True
-    return False
+from .baseline import Baseline
+from .models import Finding, Rule, ScanOptions, ScanResult
+
+DEFAULT_IGNORES = (".git/", ".venv/", "venv/", "__pycache__/", "node_modules/", ".promptrecon.baseline.json", ".promptrecon.toml")
+PLACEHOLDER_VALUES = {"changeme", "example", "placeholder", "your_token_here", "not-a-real-secret"}
 
 
-# --- v0.3 Feature #1: 插件式规则加载 ---
-def load_rules_from_dir(rules_dir="promptrecon/rules"):
-    """
-    自动扫描 rules/ 目录, 加载所有 *.py 文件中的 RULE 字典
-    """
-    loaded_rules = {}
-    if not os.path.exists(rules_dir):
-        logging.warning(f"Rules directory not found: {rules_dir}")
-        return {}
+def redact(secret: str) -> str:
+    """Produce a stable safe representation without revealing the secret."""
+    digest = hashlib.sha256(secret.encode("utf-8", "surrogateescape")).hexdigest()[:12]
+    return f"[REDACTED len={len(secret)} sha256={digest}]"
 
-    for filename in os.listdir(rules_dir):
-        if filename.endswith('.py') and not filename.startswith('__'):
-            filepath = os.path.join(rules_dir, filename)
-            module_name = f"promptrecon.rules.{filename[:-3]}"
-            
-            try:
-                spec = importlib.util.spec_from_file_location(module_name, filepath)
-                module = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(module)
-                
-                if hasattr(module, 'RULE'):
-                    for rule_name, rule_data in module.RULE.items():
-                        rule_data["regex"] = re.compile(rule_data["regex"], re.IGNORECASE | re.MULTILINE)
-                        loaded_rules[rule_name] = rule_data
-            except Exception as e:
-                logging.error(f"Failed to load rule from {filename}: {e}")
-                
-    return loaded_rules
 
-# --- v0.3 Feature #2: 文件过滤 (二进制/大文件) ---
-def is_file_scannable(filepath):
-    """
-    检查文件是否太大, 或者是否为二进制
-    """
-    try:
-        # 1. 检查文件大小
-        if os.path.getsize(filepath) > 2 * 1024 * 1024:  # > 2MB
-            return False
-            
-        # 2. 检查二进制 (通过 'null byte' 探测)
-        with open(filepath, 'rb') as f:
-            # latin-1 可以读取所有字节, 'ignore' 确保无错
-            sample = f.read(4096).decode('latin-1', 'ignore')
-            if '\x00' in sample:
-                return False
-                
-    except (IOError, OSError):
-        return False # 文件不可读
-        
-    return True
+def fingerprint(rule_id: str, path: str, secret: str) -> str:
+    material = "\0".join((rule_id, path, secret)).encode("utf-8", "surrogateescape")
+    return hashlib.sha256(material).hexdigest()
 
-# --- v0.3 Feature #3: L3 语义验证层 ---
-def looks_like_prompt(text):
-    """
-    L3 验证: 检查是否"像"一个 prompt
-    """
-    text_lower = text.lower()
-    keywords = ["you are", "assistant", "instruction", "system", "confidential", "must not", "task is to"]
-    hits = sum(1 for k in keywords if k in text_lower)
-    return hits >= 2 # 命中 2 个或以上关键词
 
-# --- v0.3 智能 Base64 (来自 v0.2 的改进) ---
-def decode_and_verify(encoded_string):
-    encoded_string = encoded_string.strip('"\'')
-    
-    # 简单的 Base64 字符分布检查
-    if not re.fullmatch(r'[A-Za-z0-9+/=]+', encoded_string):
-        return None
-    
-    if len(encoded_string) < 100 or len(encoded_string) % 4 != 0:
-        return None
-        
-    try:
-        decoded_bytes = base64.b64decode(encoded_string)
-        decoded_str = decoded_bytes.decode('utf-8')
-        
-        # 结合 L3 语义验证
-        if looks_like_prompt(decoded_str):
-            return decoded_str
-    except Exception:
-        pass
-    return None
+def _entropy(value: str) -> float:
+    if not value:
+        return 0.0
+    counts = {char: value.count(char) for char in set(value)}
+    length = len(value)
+    return -sum((count / length) * math.log2(count / length) for count in counts.values())
 
-# --- v0.3 风险评分 (来自 v0.2 的改进) ---
-def calculate_risk_score(match_data):
-    base = match_data["rule"]["risk_score"]
-    snippet = match_data["snippet"].lower()
-    
-    # 关键词权重
-    if any(k in snippet for k in ["password", "token", "key", "confidential", "admin_"]):
-        base += 2.5
-    
-    # 分支权重
-    if "main" in match_data["file"] or "prod" in match_data["file"]:
-        base += 1.0
-        
-    return min(base, 10.0)
 
-# --- 统一扫描核心：scan_content ---
-def scan_content(content, rules):
-    """
-    扫描给定内容，返回命中列表。
-    content: str 或 bytes（bytes 先 decode）
-    返回: [{'rule_name': str, 'snippet': str, 'line': int}, ...]
-    不包含 risk_score（由调用方自行补充）。
-    """
+def _has_allowlist(content: str, line: int) -> bool:
+    lines = content.splitlines()
+    current = lines[line - 1] if line <= len(lines) else ""
+    previous = lines[line - 2] if line > 1 else ""
+    return "promptrecon: allow" in current.lower() or "promptrecon: allow-next-line" in previous.lower()
+
+
+def _extract_secret(match: re.Match[str], rule: Rule) -> str:
+    if rule.secret_group is not None:
+        return match.group(rule.secret_group)
+    return match.group(0)
+
+
+def scan_content(content: str | bytes, rules: Iterable[Rule], path: str, *, source: str = "worktree", commit: str | None = None) -> list[Finding]:
+    """Scan content without retaining raw secrets in returned findings."""
     if isinstance(content, bytes):
-        content = content.decode('utf-8', errors='replace')
+        content = content.decode("utf-8", errors="replace")
+    findings: list[Finding] = []
+    for rule in rules:
+        expression = re.compile(rule.pattern, re.IGNORECASE | re.MULTILINE)
+        for match in expression.finditer(content):
+            secret = _extract_secret(match, rule)
+            line = content.count("\n", 0, match.start()) + 1
+            if rule.id == "high_entropy" and (_entropy(secret) < 4.2 or len(set(secret)) < 10):
+                continue
+            if _has_allowlist(content, line) or secret.lower() in PLACEHOLDER_VALUES or "${" in secret:
+                continue
+            findings.append(Finding(
+                rule_id=rule.id, path=path, line=line, severity=rule.severity, confidence=rule.confidence,
+                redacted=redact(secret), fingerprint=fingerprint(rule.id, path, secret), source=source, commit=commit,
+            ))
+    return findings
 
-    hits = []
-    for name, rule_data in rules.items():
-        regex = rule_data["regex"]
-        for m in regex.finditer(content):
-            line_num = content[:m.start()].count('\n') + 1
-            snippet = m.group(0)[:80]
-            hits.append({'rule_name': name, 'snippet': snippet, 'line': line_num})
-    return hits
+
+def is_scannable_bytes(raw: bytes, max_file_size: int) -> bool:
+    return len(raw) <= max_file_size and b"\0" not in raw[:4096]
 
 
-# --- v0.3 核心扫描函数（委托给 scan_content） ---
-def scan_file(filepath, rules, display_root=None):
-    """
-    扫描单个文件，返回 findings 列表（含 risk_score）。
-    委托给 scan_content() 做实际匹配。
+def build_ignore_spec(root: Path, patterns: Iterable[str]) -> pathspec.PathSpec:
+    combined = list(DEFAULT_IGNORES) + list(patterns)
+    for filename in (".gitignore", ".promptignore"):
+        candidate = root / filename
+        if candidate.is_file():
+            combined.extend(candidate.read_text(encoding="utf-8", errors="replace").splitlines())
+    return pathspec.PathSpec.from_lines("gitwildmatch", combined)
 
-    display_root: 可选，优先作为相对路径的根。
-                  三级路径计算：
-                    1. relative_to(display_root)
-                    2. relative_to(cwd)
-                    3. 绝对路径（fallback）
-    """
-    local_findings = []
-    if not is_file_scannable(filepath):
-        return local_findings
 
-    try:
-        with open(filepath, 'rb') as f:
-            raw = f.read()
+def scan_worktree(options: ScanOptions, rules: Iterable[Rule], ignore_spec: pathspec.PathSpec, baseline: Baseline | None = None) -> ScanResult:
+    root = options.root.resolve()
+    result = ScanResult()
+    for file_path in root.rglob("*"):
+        if file_path.is_symlink() or not file_path.is_file():
+            continue
+        relative = file_path.relative_to(root).as_posix()
+        if ignore_spec.match_file(relative):
+            result.skipped_files += 1
+            continue
         try:
-            content = raw.decode('utf-8', errors='replace')
-        except Exception:
-            return []
+            raw = file_path.read_bytes()
+        except OSError as exc:
+            result.errors.append(f"cannot read {relative}: {exc}")
+            continue
+        if not is_scannable_bytes(raw, options.max_file_size):
+            result.skipped_files += 1
+            continue
+        result.scanned_files += 1
+        for finding in scan_content(raw, rules, relative, source=options.source):
+            if baseline and baseline.contains(finding):
+                result.suppressed_findings += 1
+            else:
+                result.findings.append(finding)
+    return result
 
-        # ---- 路径归一化：三级降级 ----
-        abs_path = Path(filepath).resolve()
-        display_path = None
-        if display_root is not None:
-            try:
-                display_path = str(abs_path.relative_to(Path(display_root).resolve()))
-            except ValueError:
-                pass
-        if display_path is None:
-            try:
-                display_path = str(abs_path.relative_to(Path.cwd().resolve()))
-            except ValueError:
-                display_path = str(abs_path)
 
-        basic_hits = scan_content(content, rules)
-        for hit in basic_hits:
-            rule_name = hit['rule_name']
-            rule_data = rules.get(rule_name, {})
-            finding = {
-                "file": display_path,
-                "rule_name": rule_name,
-                "snippet": hit['snippet'].strip(),
-                "line": hit.get('line', 0),
-                "rule": rule_data,
-            }
-            finding["risk_score"] = calculate_risk_score(finding)
-            local_findings.append(finding)
-    except Exception:
-        pass
-    return local_findings
+# Compatibility adapters retained for callers from 0.x.
+def load_ignore_patterns(ignorefile: str = ".promptignore") -> list[str]:
+    path = Path(ignorefile)
+    if not path.exists():
+        return list(DEFAULT_IGNORES)
+    return list(DEFAULT_IGNORES) + path.read_text(encoding="utf-8", errors="replace").splitlines()
 
-# --- v2.0: Rich Table Output ---
-def output_rich_table(findings, console=None):
-    """Output findings as a rich table to console."""
-    from rich.console import Console
-    from rich.table import Table
-    if console is None:
-        console = Console()
 
-    table = Table(title="Prompt Leak Scan Results", show_lines=True)
-    table.add_column("Risk", justify="right", style="bold red")
-    table.add_column("Rule", style="cyan")
-    table.add_column("File", style="blue")
-    table.add_column("Snippet", style="white")
+def should_ignore(filepath: str, patterns: list[str]) -> bool:
+    candidate = Path(filepath).as_posix()
+    basename = Path(filepath).name
+    if any(pattern.rstrip("/") == basename for pattern in patterns):
+        return True
+    return pathspec.PathSpec.from_lines("gitwildmatch", patterns).match_file(candidate) or pathspec.PathSpec.from_lines("gitwildmatch", patterns).match_file(candidate.lstrip("/"))
 
-    for f in findings:
-        snippet = f.get("snippet", "")[:60].replace('\n', ' ')
-        table.add_row(
-            f"{f.get('risk_score', 0):.1f}",
-            f.get("rule_name", "unknown"),
-            f.get("file", "unknown"),
-            snippet
-        )
 
-    console.print(table)
+def scan_file(filepath: str, rules: object, display_root: str | None = None) -> list[dict[str, object]]:
+    """Deprecated dict-returning adapter for 0.x integrations."""
+    from .rules.defaults import builtin_rules
+    path = Path(filepath)
+    root = Path(display_root) if display_root else path.parent
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return []
+    active_rules = builtin_rules() if not isinstance(rules, tuple) else rules
+    findings = scan_content(raw, active_rules, path.resolve().relative_to(root.resolve()).as_posix())
+    return [finding.as_dict() for finding in findings]

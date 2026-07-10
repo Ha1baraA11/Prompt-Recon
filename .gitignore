@@ -16,5 +16,15 @@ env/
 # 日志
 *.log
 
+# Prompt-Recon local state
+.promptrecon.baseline.json
+.promptrecon.toml
+.env.remediated
+dist/
+build/
+.coverage
+.mypy_cache/
+.ruff_cache/
+
 # 临时文件
 temp_*

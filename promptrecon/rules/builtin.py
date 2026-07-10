@@ -1,40 +1,21 @@
-# file: promptrecon/rules/builtin.py
+"""0.x compatibility adapter for built-in rules."""
 
-# 内置规则字典，零外部依赖
-# 格式与 load_rules_from_dir() 兼容，会被 pre-compiled
+from __future__ import annotations
+
+import re
+
+from .defaults import builtin_rules
 
 RULE = {
-    "openai_api_key": {
-        "description": "OpenAI API Key (sk-...)",
-        "regex": r"sk-[a-zA-Z0-9]{32,}",
-        "risk_score": 9.0,
-        "needs_decode": False
-    },
-
-    "github_token": {
-        "description": "GitHub Personal Access Token (ghp_...)",
-        "regex": r"ghp_[a-zA-Z0-9]{36}",
-        "risk_score": 9.0,
-        "needs_decode": False
-    },
-
-    "generic_secret": {
-        "description": "Generic secret assignment (password/token/secret/api_key = \"...\")",
-        "regex": r"(?i)(password|token|secret|api_key)\s*=\s*['\"][^'\"]{8,}['\"]",
-        "risk_score": 7.0,
-        "needs_decode": False
-    },
+    rule.id: {
+        "description": rule.description,
+        "regex": rule.pattern,
+        "risk_score": {"low": 2.0, "medium": 5.0, "high": 8.0, "critical": 10.0}[rule.severity.value],
+    }
+    for rule in builtin_rules()
 }
 
 
 def load_builtin_rules():
-    """
-    加载内置规则，返回已编译 regex 的规则字典。
-    供 pre-commit hook 直接调用。
-    """
-    import re
-    loaded = {}
-    for name, data in RULE.items():
-        compiled = re.compile(data["regex"], re.IGNORECASE | re.MULTILINE)
-        loaded[name] = {**data, "regex": compiled}
-    return loaded
+    """Return the legacy dictionary shape used by 0.x integrations."""
+    return {name: {**data, "regex": re.compile(data["regex"], re.IGNORECASE | re.MULTILINE)} for name, data in RULE.items()}

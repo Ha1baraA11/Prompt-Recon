@@ -1,87 +1,86 @@
 <div align="center">
 
-**[简体中文]** | **[English](./README.en.md)** | **[繁體中文](./README.zh-TW.md)**
+**[简体中文](./README.md)** | **[English](./README.en.md)** | **[繁體中文](./README.zh-TW.md)**
 
 </div>
 
 # Prompt-Recon
 
-本地代码敏感信息扫描与 Git 提交前拦截工具。
+Prompt-Recon 是一个离线 secrets 扫描器：在工作树、暂存区和 Git 历史中发现 API key、token、私钥、数据库凭证和高熵字符串，并在提交前安全拦截。
 
-本工具用于在代码提交前检测硬编码的 API Key、Token、密码等敏感凭证，从源头防止泄露。
-
-## 核心功能
-
-- **规则驱动扫描**：使用 Python 标准库正则，扫描代码目录中的硬编码凭证（OpenAI API Key、GitHub Token、`.env` 文件等）。
-- **Git Pre-commit Hook**：将扫描封装为 Git 钩子，commit 时自动触发，检测到敏感词则阻断提交。
-- **仅扫描暂存文件**：Hook 只扫描 `git diff --cached` 返回的已暂存文件（staged blob），不扫描整个仓库，速度快。
-- **辅助脱敏**：自动将明文凭证替换为 `os.environ.get()` 格式。
+它不会向任何服务发送候选凭证。报告只输出脱敏值和指纹。
 
 ## 安装
 
 ```bash
-git clone https://github.com/Ha1baraA11/Prompt-Recon.git
-cd Prompt-Recon
-pip install -e .
+python -m pip install promptrecon
 ```
 
-安装后 `promptrecon` 命令全局可用，也可使用：
+源码开发：
 
 ```bash
-python3 -m promptrecon scan -d .
+python -m pip install -e ".[dev]"
 ```
 
-## 目录扫描
+## 使用
 
 ```bash
-# 扫描当前目录
-promptrecon scan -d .
+# 扫描工作树；发现未纳入 baseline 的命中时返回 1
+promptrecon scan .
 
-# 生成报告
-promptrecon scan -d . --jsonl results.jsonl
+# 只扫描 Git 暂存 blob，适合提交前检查
+promptrecon scan --staged
+
+# 扫描本地可达 refs 的历史 blob
+promptrecon scan --history
+
+# 输出 SARIF/JSONL
+promptrecon scan . --format sarif --output results.sarif
+promptrecon scan . --format jsonl --output results.jsonl
 ```
 
-## Hook 安装
+退出码为 `0`（无新增命中）、`1`（发现命中）或 `2`（工具/配置错误）。
+
+## Baseline 与配置
+
+首次接入已有仓库时，可以建立不包含秘密正文的指纹基线：
 
 ```bash
-# 安装 pre-commit hook（自动拦截含敏感信息的提交）
-python3 scripts/install_pre_commit_hook.py
+promptrecon baseline create .
+promptrecon baseline audit
+promptrecon baseline update .
 ```
 
-安装后，每次 `git commit` 自动扫描已暂存文件（staged blob），发现敏感词则阻断提交。支持扫描 `.env`、`.py`、`.json`、`.yaml` 等文件类型。
+可复制 `.promptrecon.toml.example` 为 `.promptrecon.toml`，配置排除路径、停用规则和自定义 TOML 规则。代码插件已弃用，避免扫描时执行任意 Python。
 
-## 提交拦截示例
+支持在行尾使用 `# promptrecon: allow`，或在上一行使用 `# promptrecon: allow-next-line`。
+
+## Git hook
 
 ```bash
-$ echo 'api_key = "sk-mock-1234567890abcdefghijklmnop"' > test.py
-$ git add test.py
-$ git commit -m "add key"
-[BLOCKED] test.py: generic_secret:1 api_key = "sk-mock-123...
-
-Blocked 1 file(s). Use --no-verify to bypass.
+promptrecon hook install
 ```
 
-## 已知限制
+已有第三方 hook 时不会静默覆盖。也可以使用仓库自带的 `.pre-commit-hooks.yaml`。
 
-- 正则扫描存在误报和漏报可能，适合作为开发流程第一道卡点。
-- 当前规则以内置 Python 字典形式提供，后续可扩展为规则文件。
-- 辅助脱敏为字符串替换，不能保证语义完全等价。
+## 安全修复预览
 
-## 架构说明
+修复默认只生成脱敏 diff；确认后才应用：
 
-```
-promptrecon/
-  hooks/
-    pre_commit.py       — Hook 主逻辑
-  rules/
-    builtin.py          — 内置规则字典
-  core.py               — 统一扫描核心
-  cli.py                — CLI 入口（scan / patch）
-  __main__.py           — python3 -m 入口
-scripts/
-  install_pre_commit_hook.py  — Hook 安装脚本
+```bash
+promptrecon patch settings.py --line 12 --env-var SERVICE_TOKEN
+promptrecon patch settings.py --line 12 --env-var SERVICE_TOKEN --apply
 ```
 
----
+不会生成包含真实秘密的 `.env.remediated` 文件。
 
-[![Stargazers over time](https://starchart.cc/Ha1baraA11/Prompt-Recon.svg?variant=dark)](https://starchart.cc/Ha1baraA11/Prompt-Recon)
+## 开发
+
+```bash
+python -m pytest
+ruff check .
+python -m mypy promptrecon
+python -m build
+```
+
+MIT License。详见 [CHANGELOG](./CHANGELOG.md)。

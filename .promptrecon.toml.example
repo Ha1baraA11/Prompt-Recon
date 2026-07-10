@@ -1,0 +1,11 @@
+[scan]
+max_file_size = 2097152
+exclude = ["docs/generated/", "fixtures/known-fake-secrets/"]
+disable_rules = []
+
+[[rule]]
+id = "internal_token"
+description = "Internal service token"
+pattern = "\\bint_[A-Za-z0-9]{24,}\\b"
+severity = "high"
+confidence = 0.9

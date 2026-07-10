@@ -1,0 +1,5 @@
+- id: promptrecon
+  name: Prompt-Recon secrets scan
+  entry: promptrecon hook run
+  language: python
+  pass_filenames: false
