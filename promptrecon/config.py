@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -9,7 +10,7 @@ from pathlib import Path
 try:
     import tomllib  # type: ignore[import-not-found]
 except ModuleNotFoundError:  # pragma: no cover - Python 3.10
-    import tomli as tomllib
+    tomllib = importlib.import_module("tomli")
 
 from .models import Rule, Severity
 
