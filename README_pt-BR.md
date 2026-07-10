@@ -1,16 +1,19 @@
-<div align="center">
-
-[English](./README.md) · [简体中文](./README.zh-CN.md) · [繁體中文](./README.zh-TW.md) · [日本語](./README_ja.md) · [한국어](./README_ko.md) · [Español](./README_es.md) · **Português** · [Русский](./README_ru.md) · [Français](./README_fr.md) · [Deutsch](./README_de.md)
-
-</div>
-
 <p align="center">
   <img src="assets/logo.png" alt="Logo do Prompt-Recon" width="200">
 </p>
 
-# Prompt-Recon
+<h1 align="center">Prompt-Recon</h1>
 
-Prompt-Recon é um scanner offline de secrets para repositórios pessoais e equipes pequenas. Ele verifica a árvore de trabalho, a área de staging do Git e o histórico local alcançável para encontrar tokens, chaves privadas, credenciais de banco de dados, JWTs e valores de alta entropia, sem enviar candidatos para nenhum serviço.
+<p align="center">
+  <strong>Scanner offline de secrets para repositórios pessoais e equipes pequenas</strong><br>
+  Verifica a árvore de trabalho, blobs staged e o histórico Git acessível sem enviar candidatos para nenhum serviço.
+</p>
+
+<p align="center">
+  [English](./README.md) · [简体中文](./README.zh-CN.md) · [繁體中文](./README.zh-TW.md) · [日本語](./README_ja.md) · [한국어](./README_ko.md) · [Español](./README_es.md) · [Русский](./README_ru.md) · [Français](./README_fr.md) · [Deutsch](./README_de.md)
+</p>
+
+---
 
 ## Recursos
 

@@ -1,16 +1,19 @@
-<div align="center">
-
-[English](./README.md) · [简体中文](./README.zh-CN.md) · [繁體中文](./README.zh-TW.md) · [日本語](./README_ja.md) · **한국어** · [Español](./README_es.md) · [Português](./README_pt-BR.md) · [Русский](./README_ru.md) · [Français](./README_fr.md) · [Deutsch](./README_de.md)
-
-</div>
-
 <p align="center">
   <img src="assets/logo.png" alt="Prompt-Recon 로고" width="200">
 </p>
 
-# Prompt-Recon
+<h1 align="center">Prompt-Recon</h1>
 
-Prompt-Recon은 개인 저장소와 소규모 팀을 위한 오프라인 secrets 스캐너입니다. 작업 트리, Git 스테이징 영역, 로컬에서 접근 가능한 기록을 검사하여 공급자 토큰, 개인 키, 데이터베이스 자격 증명, JWT, 고엔트로피 값을 찾습니다. 후보 값은 외부로 전송되지 않습니다.
+<p align="center">
+  <strong>개인 저장소와 소규모 팀을 위한 오프라인 secrets 스캐너</strong><br>
+  작업 트리, staged blob, 접근 가능한 Git 기록을 검사하며 후보 값은 외부로 전송하지 않습니다.
+</p>
+
+<p align="center">
+  [English](./README.md) · [简体中文](./README.zh-CN.md) · [繁體中文](./README.zh-TW.md) · [日本語](./README_ja.md) · [Español](./README_es.md) · [Português](./README_pt-BR.md) · [Русский](./README_ru.md) · [Français](./README_fr.md) · [Deutsch](./README_de.md)
+</p>
+
+---
 
 ## 기능
 

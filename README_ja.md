@@ -1,16 +1,19 @@
-<div align="center">
-
-[English](./README.md) · [简体中文](./README.zh-CN.md) · [繁體中文](./README.zh-TW.md) · **日本語** · [한국어](./README_ko.md) · [Español](./README_es.md) · [Português](./README_pt-BR.md) · [Русский](./README_ru.md) · [Français](./README_fr.md) · [Deutsch](./README_de.md)
-
-</div>
-
 <p align="center">
   <img src="assets/logo.png" alt="Prompt-Recon ロゴ" width="200">
 </p>
 
-# Prompt-Recon
+<h1 align="center">Prompt-Recon</h1>
 
-Prompt-Recon は個人リポジトリや小規模チーム向けのオフライン secrets スキャナーです。ワークツリー、Git のステージ領域、ローカルで到達可能な履歴からトークン、秘密鍵、データベース認証情報、JWT、高エントロピー値を検出します。候補値を外部へ送信することはありません。
+<p align="center">
+  <strong>個人リポジトリと小規模チーム向けのオフライン secrets スキャナー</strong><br>
+  ワークツリー、staged blob、到達可能な Git 履歴を検査し、候補値を外部へ送信しません。
+</p>
+
+<p align="center">
+  [English](./README.md) · [简体中文](./README.zh-CN.md) · [繁體中文](./README.zh-TW.md) · [한국어](./README_ko.md) · [Español](./README_es.md) · [Português](./README_pt-BR.md) · [Русский](./README_ru.md) · [Français](./README_fr.md) · [Deutsch](./README_de.md)
+</p>
+
+---
 
 ## 機能
 

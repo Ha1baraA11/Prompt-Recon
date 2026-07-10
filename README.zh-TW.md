@@ -1,16 +1,19 @@
-<div align="center">
-
-[English](./README.md) · [简体中文](./README.zh-CN.md) · **繁體中文** · [日本語](./README_ja.md) · [한국어](./README_ko.md) · [Español](./README_es.md) · [Português](./README_pt-BR.md) · [Русский](./README_ru.md) · [Français](./README_fr.md) · [Deutsch](./README_de.md)
-
-</div>
-
 <p align="center">
   <img src="assets/logo.png" alt="Prompt-Recon 標誌" width="200">
 </p>
 
-# Prompt-Recon
+<h1 align="center">Prompt-Recon</h1>
 
-Prompt-Recon 是適合個人儲存庫與小型團隊的離線 secrets 掃描器。它檢查工作樹、Git 暫存區與本機可達的歷史，偵測供應商 token、私鑰、資料庫憑證、JWT 與高熵值，且不會將候選內容送到任何地方。
+<p align="center">
+  <strong>適合個人儲存庫與小型團隊的離線 secrets 掃描器</strong><br>
+  檢查工作樹、暫存 blob 與本機可達的 Git 歷史，不會將候選內容送到任何地方。
+</p>
+
+<p align="center">
+  [English](./README.md) · [简体中文](./README.zh-CN.md) · [日本語](./README_ja.md) · [한국어](./README_ko.md) · [Español](./README_es.md) · [Português](./README_pt-BR.md) · [Русский](./README_ru.md) · [Français](./README_fr.md) · [Deutsch](./README_de.md)
+</p>
+
+---
 
 ## 功能
 
