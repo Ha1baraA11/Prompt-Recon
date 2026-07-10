@@ -1,49 +1,63 @@
 <div align="center">
 
-**[简体中文](./README.md)** | **[English](./README.en.md)** | **[繁體中文](./README.zh-TW.md)**
+**English** · [简体中文](./README.zh-CN.md) · [繁體中文](./README.zh-TW.md) · [日本語](./README_ja.md) · [한국어](./README_ko.md) · [Español](./README_es.md) · [Português](./README_pt-BR.md) · [Русский](./README_ru.md) · [Français](./README_fr.md) · [Deutsch](./README_de.md)
 
 </div>
 
+<p align="center">
+  <img src="assets/logo.png" alt="Prompt-Recon logo" width="200">
+</p>
+
 # Prompt-Recon
 
-Prompt-Recon 是一个离线 secrets 扫描器：在工作树、暂存区和 Git 历史中发现 API key、token、私钥、数据库凭证和高熵字符串，并在提交前安全拦截。
+Prompt-Recon is an offline secrets scanner for personal repositories and small teams. It checks the working tree, Git staging area, and reachable local history for provider tokens, private keys, database credentials, JWTs, and high-entropy values—without sending candidates anywhere.
 
-它不会向任何服务发送候选凭证。报告只输出脱敏值和指纹。
+## What it does
 
-## 安装
+- Scans files, staged blobs, and Git history without checking out old revisions.
+- Ships rules for AWS, GitHub, GitLab, OpenAI, Anthropic, Hugging Face, Slack, Stripe, npm, PyPI, Google API, private keys, JWTs, database URLs, and generic credential assignments.
+- Redacts matched values in console output and machine reports; baselines store fingerprints only.
+- Supports `.gitignore`, `.promptignore`, TOML configuration, inline allow markers, SARIF, JSONL, CSV, and Markdown reports.
+
+## Requirements
+
+- Python 3.10–3.13
+- Git for staged and history scans
+
+## Installation
 
 ```bash
 python -m pip install promptrecon
 ```
 
-源码开发：
+For local development:
 
 ```bash
 python -m pip install -e ".[dev]"
 ```
 
-## 使用
+## Usage
 
 ```bash
-# 扫描工作树；发现未纳入 baseline 的命中时返回 1
+# Scan the working tree
 promptrecon scan .
 
-# 只扫描 Git 暂存 blob，适合提交前检查
+# Scan only staged Git blobs before a commit
 promptrecon scan --staged
 
-# 扫描本地可达 refs 的历史 blob
+# Scan reachable local Git history
 promptrecon scan --history
 
-# 输出 SARIF/JSONL
+# Select a report format and output file
 promptrecon scan . --format sarif --output results.sarif
 promptrecon scan . --format jsonl --output results.jsonl
 ```
 
-退出码为 `0`（无新增命中）、`1`（发现命中）或 `2`（工具/配置错误）。
+Supported formats are `console`, `jsonl`, `csv`, `markdown`, and `sarif`. Exit codes are `0` when no new un-baselined finding remains, `1` when findings remain, and `2` for configuration, Git, or runtime errors.
 
-## Baseline 与配置
+## Baseline and configuration
 
-首次接入已有仓库时，可以建立不包含秘密正文的指纹基线：
+Baselines suppress findings that have been reviewed without storing secret text:
 
 ```bash
 promptrecon baseline create .
@@ -51,36 +65,52 @@ promptrecon baseline audit
 promptrecon baseline update .
 ```
 
-可复制 `.promptrecon.toml.example` 为 `.promptrecon.toml`，配置排除路径、停用规则和自定义 TOML 规则。代码插件已弃用，避免扫描时执行任意 Python。
+Creation refuses to overwrite an existing baseline unless `--force` is supplied. Copy `.promptrecon.toml.example` to `.promptrecon.toml` to configure exclusions and data-only custom rules. Python rule plugins and `--rules-dir` remain only as deprecated compatibility paths.
 
-支持在行尾使用 `# promptrecon: allow`，或在上一行使用 `# promptrecon: allow-next-line`。
+Use `# promptrecon: allow` on a finding line or `# promptrecon: allow-next-line` on the preceding line for deliberate exceptions.
 
-## Git hook
+## Git hooks
 
 ```bash
 promptrecon hook install
+promptrecon hook run
+promptrecon hook uninstall
 ```
 
-已有第三方 hook 时不会静默覆盖。也可以使用仓库自带的 `.pre-commit-hooks.yaml`。
+Installation refuses to silently replace an existing third-party hook. The hook scans staged content, not unrelated unstaged edits. A `.pre-commit-hooks.yaml` entry is included for pre-commit users.
 
-## 安全修复预览
+## Safe patch preview
 
-修复默认只生成脱敏 diff；确认后才应用：
+Patch is limited to safely located Python string assignments. It shows a redacted preview by default and writes only when `--apply` is explicit:
 
 ```bash
 promptrecon patch settings.py --line 12 --env-var SERVICE_TOKEN
 promptrecon patch settings.py --line 12 --env-var SERVICE_TOKEN --apply
 ```
 
-不会生成包含真实秘密的 `.env.remediated` 文件。
+Prompt-Recon never creates a remediated file containing the real secret.
 
-## 开发
+## Development
 
 ```bash
 python -m pytest
 ruff check .
 python -m mypy promptrecon
 python -m build
+python -m promptrecon --help
 ```
 
-MIT License。详见 [CHANGELOG](./CHANGELOG.md)。
+## Files
+
+| Path | Purpose |
+| --- | --- |
+| `promptrecon/core.py` | Worktree scanning and file guards |
+| `promptrecon/git.py` | Staged and history blob access |
+| `promptrecon/rules/` | Built-in detection rules |
+| `promptrecon/baseline.py` | Fingerprint-only baseline handling |
+| `promptrecon/cli.py` | CLI and report formats |
+| `tests/` | Unit and integration tests |
+
+## License
+
+MIT. See [LICENSE](./LICENSE) and [CHANGELOG](./CHANGELOG.md).

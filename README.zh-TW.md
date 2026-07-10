@@ -1,23 +1,90 @@
+<div align="center">
+
+[English](./README.md) · [简体中文](./README.zh-CN.md) · **繁體中文** · [日本語](./README_ja.md) · [한국어](./README_ko.md) · [Español](./README_es.md) · [Português](./README_pt-BR.md) · [Русский](./README_ru.md) · [Français](./README_fr.md) · [Deutsch](./README_de.md)
+
+</div>
+
+<p align="center">
+  <img src="assets/logo.png" alt="Prompt-Recon 標誌" width="200">
+</p>
+
 # Prompt-Recon
 
-Prompt-Recon 是離線 secrets 掃描器，可檢查工作樹、Git 暫存區與本地可達的 Git 歷史，偵測 API key、token、私鑰、資料庫憑證及高熵字串。候選憑證不會送出網路，報告只顯示脫敏值與指紋。
+Prompt-Recon 是適合個人儲存庫與小型團隊的離線 secrets 掃描器。它檢查工作樹、Git 暫存區與本機可達的歷史，偵測供應商 token、私鑰、資料庫憑證、JWT 與高熵值，且不會將候選內容送到任何地方。
+
+## 功能
+
+- 掃描檔案、暫存 blob 與 Git 歷史，不 checkout 舊版本。
+- 內建 AWS、GitHub、GitLab、OpenAI、Anthropic、Hugging Face、Slack、Stripe、npm、PyPI、Google API、私鑰、JWT、資料庫 URL 與一般憑證賦值規則。
+- 主控台與機器報告一律脫敏；baseline 只保存指紋。
+- 支援 `.gitignore`、`.promptignore`、TOML 設定、行內 allow 標記，以及 SARIF、JSONL、CSV、Markdown 報告。
+
+## 需求
+
+- Python 3.10–3.13
+- 暫存區與歷史掃描需要 Git
+
+## 安裝
 
 ```bash
 python -m pip install promptrecon
+```
+
+本機開發：
+
+```bash
+python -m pip install -e ".[dev]"
+```
+
+## 使用
+
+```bash
 promptrecon scan .
 promptrecon scan --staged
 promptrecon scan --history
 promptrecon scan . --format sarif --output results.sarif
 ```
 
-退出碼為 `0`（沒有新增命中）、`1`（發現命中）或 `2`（工具/設定錯誤）。Baseline 只保存指紋：
+支援 `console`、`jsonl`、`csv`、`markdown` 與 `sarif`。退出碼：`0` 表示沒有新的未納入 baseline 的命中，`1` 表示仍有命中，`2` 表示設定、Git 或執行錯誤。
+
+## Baseline 與設定
 
 ```bash
 promptrecon baseline create .
 promptrecon baseline audit
-promptrecon hook install
+promptrecon baseline update .
 ```
 
-複製 `.promptrecon.toml.example` 為 `.promptrecon.toml` 可設定排除路徑與資料化自訂規則。修復預設只預覽，只有明確指定 `--apply` 才會寫入。
+Baseline 不保存秘密正文；已有檔案必須明確指定 `--force` 才能覆寫。複製 `.promptrecon.toml.example` 為 `.promptrecon.toml` 以設定排除路徑與資料化自訂規則。可使用 `# promptrecon: allow` 或 `# promptrecon: allow-next-line` 標記刻意接受的命中。
 
-詳見 [CHANGELOG](./CHANGELOG.md)。採用 MIT License。
+## Git Hook
+
+```bash
+promptrecon hook install
+promptrecon hook run
+promptrecon hook uninstall
+```
+
+安裝時不會靜默覆蓋既有的第三方 hook，hook 只掃描暫存內容。
+
+## 安全修復預覽
+
+```bash
+promptrecon patch settings.py --line 12 --env-var SERVICE_TOKEN
+promptrecon patch settings.py --line 12 --env-var SERVICE_TOKEN --apply
+```
+
+預設只顯示脫敏預覽，只有明確指定 `--apply` 才會原子寫入，絕不產生含有真實秘密的修復檔案。
+
+## 開發
+
+```bash
+python -m pytest
+ruff check .
+python -m mypy promptrecon
+python -m build
+```
+
+## 授權
+
+MIT。詳見 [LICENSE](./LICENSE) 與 [CHANGELOG](./CHANGELOG.md)。
