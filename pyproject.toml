@@ -45,6 +45,14 @@ include = ["promptrecon*"]
 testpaths = ["tests"]
 addopts = "--strict-markers"
 
+[tool.coverage.run]
+omit = [
+  "promptrecon/cli.py",
+  "promptrecon/git.py",
+  "promptrecon/__main__.py",
+  "promptrecon/hooks/*",
+]
+
 [tool.ruff]
 line-length = 120
 target-version = "py310"
